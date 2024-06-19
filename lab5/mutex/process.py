@@ -1,8 +1,11 @@
 import logging
 import random
+import threading
 import time
 
-from constMutex import ENTER, RELEASE, ALLOW
+from constMutex import ENTER, RELEASE, ALLOW, HEARTBEAT
+
+HEARTBEAT_INTERVAL = 5
 
 
 class Process:
@@ -39,6 +42,7 @@ class Process:
         self.other_processes: list = []  # Needed to multicast to others
         self.queue = []  # The request queue list
         self.clock = 0  # The current logical clock
+        self.last_heartbeats = {} # keep track of the last time an active signal was received from each process
         self.logger = logging.getLogger("vs2lab.lab5.mutex.process.Process")
 
     def __mapid(self, id='-1'):
@@ -100,11 +104,17 @@ class Process:
 
             self.logger.debug("{} received {} from {}.".format(
                 self.__mapid(),
-                "ENTER" if msg[2] == ENTER
-                else "ALLOW" if msg[2] == ALLOW
-                else "RELEASE", self.__mapid(msg[1])))
+                "ENTER" if msg[2] == ENTER else "ALLOW" if msg[2] == ALLOW else "RELEASE" if msg[2] == RELEASE else "ACTIVE",
+                self.__mapid(msg[1])))
+            
+            self.remove_inactive()
 
-            if msg[2] == ENTER:
+            
+            if msg[2] == HEARTBEAT: 
+                # Get current time and set the last heartbeat time of the corresponding process
+                current_time = time.time()
+                self.last_heartbeats[msg[1]] = current_time
+            elif msg[2] == ENTER:
                 self.queue.append(msg)  # Append an ENTER request
                 # and unconditionally allow (don't want to access CS oneself)
                 self.__allow_to_enter(msg[1])
@@ -119,6 +129,37 @@ class Process:
         else:        
             self.logger.warning("{} timed out on RECEIVE.".format(self.__mapid()))
 
+
+    def remove_inactive(self):
+        current_time = time.time()
+        timeout = 2 * HEARTBEAT_INTERVAL
+        
+        # Check for all processes if their last the last heartbeat was sent outside of the timeout time
+        for process, last_heartbeat in list(self.last_heartbeats.items()):
+            if current_time - last_heartbeat > timeout:
+                if process in self.other_processes:
+                    print(f"Process {self.process_id} detected no heartbeat from {process}. Ignoring it from now on")
+                    self.other_processes.remove(process)
+                
+                # Clean up the queue, removing the inactive process
+                self.queue = [msg for msg in self.queue if msg[1] != process]
+                
+                # Delete the last heartbeat entry of the inactive process as its not needed anymore
+                del self.last_heartbeats[process]
+    
+    def __send_heartbeat(self):
+        self.clock += 1  
+        heartbeat_message = (self.clock, self.process_id, HEARTBEAT)
+        
+        # Send a heartbeat to all of the processes
+        self.channel.send_to(self.other_processes, heartbeat_message)
+
+    def start_heartbeats(self):
+        # Start the heartbeat intervals for al processes
+        threading.Timer(HEARTBEAT_INTERVAL, self.start_heartbeats).start()
+        self.__send_heartbeat()
+
+
     def init(self):
         self.channel.bind(self.process_id)
 
@@ -129,17 +170,15 @@ class Process:
         self.other_processes = list(self.channel.subgroup('proc'))
         self.other_processes.remove(self.process_id)
 
-        self.logger.info("Member {} joined channel as {}."
-                         .format(self.process_id, self.__mapid()))
+        self.logger.info("Member {} joined channel as {}.".format(self.process_id, self.__mapid()))
 
     def run(self):
+        self.start_heartbeats()
         while True:
             # Enter the critical section if there are more than one process left
             # and random is true
-            if len(self.all_processes) > 1 and \
-                    random.choice([True, False]):
-                self.logger.debug("{} wants to ENTER CS at CLOCK {}."
-                    .format(self.__mapid(), self.clock))
+            if len(self.all_processes) > 1 and random.choice([True, False]):
+                self.logger.debug("{} wants to ENTER CS at CLOCK {}.".format(self.__mapid(), self.clock))
 
                 self.__request_to_enter()
                 while not self.__allowed_to_enter():
@@ -147,8 +186,7 @@ class Process:
 
                 # Stay in CS for some time ...
                 sleep_time = random.randint(0, 2000)
-                self.logger.debug("{} enters CS for {} milliseconds."
-                    .format(self.__mapid(), sleep_time))
+                self.logger.debug("{} enters CS for {} milliseconds.".format(self.__mapid(), sleep_time))
                 print(" CS <- {}".format(self.__mapid()))
                 time.sleep(sleep_time/1000)
 
