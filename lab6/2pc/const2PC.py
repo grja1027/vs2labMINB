@@ -15,3 +15,7 @@ LOCAL_SUCCESS = 'LOCAL_SUCCESS'
 
 # fail-noisy crash timeout
 TIMEOUT = 1
+
+# Precommit messages
+PREPARE_COMMIT = 'PREPARE_COMMIT'
+READY_COMMIT = 'READY_COMMIT'

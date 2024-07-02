@@ -106,10 +106,9 @@ class Process:
                 self.__mapid(),
                 "ENTER" if msg[2] == ENTER else "ALLOW" if msg[2] == ALLOW else "RELEASE" if msg[2] == RELEASE else "ACTIVE",
                 self.__mapid(msg[1])))
-            
+    
             self.remove_inactive()
 
-            
             if msg[2] == HEARTBEAT: 
                 # Get current time and set the last heartbeat time of the corresponding process
                 current_time = time.time()
@@ -148,14 +147,13 @@ class Process:
                 del self.last_heartbeats[process]
     
     def __send_heartbeat(self):
-        self.clock += 1  
         heartbeat_message = (self.clock, self.process_id, HEARTBEAT)
         
         # Send a heartbeat to all of the processes
         self.channel.send_to(self.other_processes, heartbeat_message)
 
     def start_heartbeats(self):
-        # Start the heartbeat intervals for al processes
+        # Start the heartbeat intervals for all processes
         threading.Timer(HEARTBEAT_INTERVAL, self.start_heartbeats).start()
         self.__send_heartbeat()
 

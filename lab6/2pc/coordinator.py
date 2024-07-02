@@ -9,6 +9,8 @@ from const2PC import VOTE_REQUEST, GLOBAL_COMMIT, GLOBAL_ABORT
 from const2PC import VOTE_COMMIT, VOTE_ABORT
 # misc constants
 from const2PC import TIMEOUT
+# prepare commit messages
+from const2PC import PREPARE_COMMIT, READY_COMMIT
 
 
 class Coordinator:
@@ -46,6 +48,7 @@ class Coordinator:
             return "Coordinator crashed in state INIT."
 
         # Request local votes from all participants
+        print("Coordinator entered WAIT, sent vote request to all participants")
         self._enter_state('WAIT')
         self.channel.send_to(self.participants, VOTE_REQUEST)
 
@@ -70,6 +73,36 @@ class Coordinator:
                 yet_to_receive.remove(msg[0])
 
         # all participants have locally committed
+
+        # C enters precommit state
+        print("Coordinator received VOTE_COMMIT from all participants")
+        print("Coordinator enters PRECOMMIT, sent PREPARE_COMMIT to all participants")
+        self._enter_state('PRECOMMIT')
+        # send prepare commit to all participants
+        self.channel.send_to(self.participants, PREPARE_COMMIT)
+
+        yet_to_receive = list(self.participants)
+        while len(yet_to_receive) > 0:
+            msg = self.channel.receive_from(self.participants, TIMEOUT)
+
+            if (not msg) or (msg[1] == VOTE_ABORT):
+                reason = "timeout" if not msg else "local_abort from " + msg[0]
+                self._enter_state('ABORT')
+                # Inform all participants about global abort
+                self.channel.send_to(self.participants, GLOBAL_ABORT)
+                return "Coordinator {} terminated in state ABORT. Reason: {}."\
+                    .format(self.coordinator, reason)
+
+            else:
+                assert msg[1] == READY_COMMIT
+                yet_to_receive.remove(msg[0])
+
+
+
+        # C receives all precommit messages from participants. 
+        # If all are ready_commit, then C enters commit and sends global commit to all participants
+        print("Coordinator received READY_COMMIT from all participants")
+        print("Coordinator enters COMMIT, sent GLOBAL_COMMIT to all participants")
         self._enter_state('COMMIT')
 
         # Inform all participants about global commit

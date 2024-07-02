@@ -9,6 +9,8 @@ from const2PC import LOCAL_SUCCESS, LOCAL_ABORT
 from const2PC import VOTE_COMMIT, VOTE_ABORT, NEED_DECISION
 # misc constants
 from const2PC import TIMEOUT
+# prepare commit
+from const2PC import PREPARE_COMMIT, READY_COMMIT
 
 import stablelog
 
@@ -66,6 +68,7 @@ class Participant:
             # If local decision is negative,
             # then vote for abort and quit directly
             if decision == LOCAL_ABORT:
+                print("Transaction failed, sent LOCAL_ABORT to coordinator")
                 self.channel.send_to(self.coordinator, VOTE_ABORT)
 
             # If local decision is positive,
@@ -75,6 +78,7 @@ class Participant:
                 self._enter_state('READY')
 
                 # Notify coordinator about local commit vote
+                print("Transaction succeeded, sent VOTE_COMMIT to coordinator")
                 self.channel.send_to(self.coordinator, VOTE_COMMIT)
 
                 # Wait for coordinator to notify the final outcome
@@ -93,14 +97,50 @@ class Participant:
                             break
 
                 else:  # Coordinator came to a decision
+
+                    # Wait for response from C, which could be either prepare commit or global abort
                     decision = msg[1]
 
         # Change local state based on the outcome of the joint commit protocol
         # Note: If the protocol has blocked due to coordinator crash,
         # we will never reach this point
-        if decision == GLOBAL_COMMIT:
-            self._enter_state('COMMIT')
+
+        # If message from C = precommit: enter state precommit and send ready commit to C
+
+        # if message from C = global_commit: participants enters commit state and terminates
+        if decision == PREPARE_COMMIT:
+            print("Participant received PREPARE_COMMIT from coordinator, enters PRECOMMIT and sends READY_COMMIT to coordinator")
+            self._enter_state('PRECOMMIT')
+            self.channel.send_to(self.coordinator, READY_COMMIT)
         else:
+            assert decision in [GLOBAL_ABORT, LOCAL_ABORT]
+            self._enter_state('ABORT')
+
+        msg = self.channel.receive_from(self.coordinator, TIMEOUT)
+
+        if not msg:  # Crashed coordinator
+            # Ask all processes for their decisions
+            self.channel.send_to(self.all_participants, NEED_DECISION)
+            while True:
+                msg = self.channel.receive_from_any()
+                # If someone reports a final decision,
+                # we locally adjust to it
+                if msg[1] in [
+                        GLOBAL_COMMIT, GLOBAL_ABORT, LOCAL_ABORT]:
+                    decision = msg[1]
+                    break
+
+        else:  # Coordinator came to a decision
+
+            # Wait for response from C, which could be either prepare commit or global abort
+            decision = msg[1]
+
+        if decision == GLOBAL_COMMIT:
+            print("Received GLOBAL_COMMIT from coordinator, entered COMMIT and sent READY_COMMIT to coordinator")
+            self._enter_state('COMMIT')
+            self.channel.send_to(self.coordinator, READY_COMMIT)
+        else:
+            print("Received ABORT from coordinator, entered ABORT")
             assert decision in [GLOBAL_ABORT, LOCAL_ABORT]
             self._enter_state('ABORT')
 
