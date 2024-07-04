@@ -52,7 +52,7 @@ class Coordinator:
         self._enter_state('WAIT')
         self.channel.send_to(self.participants, VOTE_REQUEST)
 
-        if random.random() > 2/3:  # simulate a crash
+        if random.random() > 0:  # simulate a crash
             return "Coordinator crashed in state WAIT."
 
         # Collect votes from all participants

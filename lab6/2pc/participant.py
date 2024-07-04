@@ -51,6 +51,49 @@ class Participant:
         self.all_participants = self.channel.subgroup('participant')
         self._enter_state('INIT')  # Start in local INIT state.
 
+    def findNewCoordinator(self):
+        self.coordinator = {min(self.all_participants)}
+        self.all_participants.remove(self.coordinator)
+        if self.participant in self.coordinator:
+            print("Participant{} selected as new coordinator", self.participant)
+            match self.state:
+                case "READY" :
+                    self._enter_state('WAIT')
+                    self.channel.send_to(self.all_participants, 'WAIT')
+                    if self.state != 'ABORT':
+                        self._enter_state('ABORT')
+                    self.channel.send_to(self.all_participants, GLOBAL_ABORT)
+                    return GLOBAL_ABORT
+                case "PRECOMMIT":
+                    self.channel.send_to(self.all_participants, 'PRECOMMIT')
+                    self._enter_state('COMMIT')
+                    self.channel.send_to(self.all_participants, GLOBAL_COMMIT)
+                    return GLOBAL_COMMIT
+                case "ABORT":
+                    self.channel.send_to(self.all_participants, 'ABORT')
+                    if self.state != 'ABORT':
+                        self._enter_state('ABORT')
+                    self.channel.send_to(self.all_participants, GLOBAL_ABORT)
+                    return GLOBAL_ABORT
+                case _: 
+                    self.channel.send_to(self.all_participants, 'COMMIT')
+                    self.channel.send_to(self.all_participants, GLOBAL_COMMIT)
+                    return GLOBAL_COMMIT
+                
+        else:
+            self.receiveState
+        
+    def receiveState(self):
+        msg = self.channel.receive_from(self.coordinator, TIMEOUT * 2)
+        if msg[1] == 'WAIT' and self.state == 'INIT':
+            self._enter_state('READY')
+        elif msg[1] == 'PRECOMMIT' and self.state == 'READY':
+            self._enter_state('PRECOMMIT')
+        elif msg[1] == 'COMMIT' and self.state != 'COMMIT':
+            self._enter_state('COMMIT')
+        elif msg[1] == 'ABORT' and self.state != 'ABORT':
+            self._enter_state('ABORT')
+
     def run(self):
         # Wait for start of joint commit
         msg = self.channel.receive_from(self.coordinator, TIMEOUT)
@@ -91,10 +134,8 @@ class Participant:
                         msg = self.channel.receive_from_any()
                         # If someone reports a final decision,
                         # we locally adjust to it
-                        if msg[1] in [
-                                GLOBAL_COMMIT, GLOBAL_ABORT, LOCAL_ABORT]:
-                            decision = msg[1]
-                            break
+                        if msg[1] == NEED_DECISION:
+                            decision = self.findNewCoordinator
 
                 else:  # Coordinator came to a decision
 
@@ -125,10 +166,8 @@ class Participant:
                 msg = self.channel.receive_from_any()
                 # If someone reports a final decision,
                 # we locally adjust to it
-                if msg[1] in [
-                        GLOBAL_COMMIT, GLOBAL_ABORT, LOCAL_ABORT]:
-                    decision = msg[1]
-                    break
+                if msg[1] == NEED_DECISION:
+                    decision = self.findNewCoordinator
 
         else:  # Coordinator came to a decision
 
